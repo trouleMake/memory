@@ -1,7 +1,15 @@
 import json
+
 from openai import OpenAI
+
 from Util.api_key import DEEPSEEK_API_KEY, DEEPSEEK_API_URL
+from Util.mysql_config import DB_CONFIG
 from tools import TOOLS, TOOL_MAP
+
+from memory.memory_extractor import MemoryExtractor
+from memory.memory_repository import MemoryRepository
+from memory.memory_service import MemoryService
+from memory.prompt_memory_assembler import PromptMemoryAssembler
 
 
 client = OpenAI(
@@ -11,10 +19,22 @@ client = OpenAI(
 
 
 class AgentBrain:
-    """Agent 的大脑，负责思考与决策"""
-
-    def __init__(self, model="deepseek-chat"):
+    def __init__(self, model="deepseek-chat", user_id=1):
         self.model = model
+        self.user_id = user_id
+
+        repository = MemoryRepository(
+            host=DB_CONFIG["host"],
+            port=DB_CONFIG["port"],
+            user=DB_CONFIG["user"],
+            password=DB_CONFIG["password"],
+            database=DB_CONFIG["database"]
+        )
+        extractor = MemoryExtractor()
+
+        self.memory_service = MemoryService(extractor, repository)
+        self.prompt_memory_assembler = PromptMemoryAssembler()
+
         self.messages = [
             {
                 "role": "system",
@@ -26,12 +46,19 @@ class AgentBrain:
             }
         ]
 
-    def think(self, prompt):
-        """支持 tool call 的单轮思考"""
+    def think(self, prompt: str) -> str:
         try:
-            self.messages.append({"role": "user", "content": prompt})
+            # 1. 先查历史记忆，用于辅助当前回答
+            memories = self.memory_service.get_relevant_memories(
+                self.user_id,
+                prompt,
+                limit=5
+            )
+            enhanced_prompt = self.prompt_memory_assembler.assemble(memories, prompt)
 
-            # 第一次请求：让模型决定要不要调用工具
+            # 2. 用增强后的 prompt 让模型回答
+            self.messages.append({"role": "user", "content": enhanced_prompt})
+
             response = client.chat.completions.create(
                 model=self.model,
                 messages=self.messages,
@@ -41,16 +68,14 @@ class AgentBrain:
 
             message = response.choices[0].message
 
-            # 1. 没有工具调用，直接返回文本
             if not message.tool_calls:
                 reply = (message.content or "").strip()
-                self.messages.append({
-                    "role": "assistant",
-                    "content": reply
-                })
+                self.messages.append({"role": "assistant", "content": reply})
+
+                # 3. 回答结束后，再把当前输入提取并保存为新记忆
+                self.memory_service.extract_and_save(self.user_id, prompt)
                 return reply
 
-            # 2. 有工具调用：先把 assistant 的 tool_call 消息放进上下文
             self.messages.append({
                 "role": "assistant",
                 "content": message.content or "",
@@ -67,7 +92,6 @@ class AgentBrain:
                 ]
             })
 
-            # 3. 执行工具，并把结果回填
             for tool_call in message.tool_calls:
                 tool_name = tool_call.function.name
                 tool_args_str = tool_call.function.arguments or "{}"
@@ -79,8 +103,7 @@ class AgentBrain:
                         "error": f"未知工具: {tool_name}"
                     }
                 else:
-                    tool_func = TOOL_MAP[tool_name]
-                    tool_result = tool_func(**tool_args)
+                    tool_result = TOOL_MAP[tool_name](**tool_args)
 
                 self.messages.append({
                     "role": "tool",
@@ -88,18 +111,16 @@ class AgentBrain:
                     "content": json.dumps(tool_result, ensure_ascii=False)
                 })
 
-            # 4. 第二次请求：把 tool result 交回模型，让模型生成最终回答
             second_response = client.chat.completions.create(
                 model=self.model,
                 messages=self.messages
             )
 
             final_reply = (second_response.choices[0].message.content or "").strip()
-            self.messages.append({
-                "role": "assistant",
-                "content": final_reply
-            })
+            self.messages.append({"role": "assistant", "content": final_reply})
 
+            # 4. 工具调用结束后，同样再保存当前轮输入中的新记忆
+            self.memory_service.extract_and_save(self.user_id, prompt)
             return final_reply
 
         except Exception as e:
@@ -116,39 +137,3 @@ class AgentBrain:
                 )
             }
         ]
-
-
-def chat_loop():
-    """命令行连续对话"""
-    brain = AgentBrain()
-
-    print("=== Agent 已启动 ===")
-    print("输入 quit / exit 退出")
-    print("输入 clear 清空上下文")
-    print()
-
-    while True:
-        user_input = input("你：").strip()
-
-        if not user_input:
-            continue
-
-        cmd = user_input.lower()
-
-        if cmd in {"quit", "exit"}:
-            print("Agent：再见。")
-            break
-
-        if cmd == "clear":
-            brain.clear_memory()
-            print("Agent：上下文已清空。")
-            print()
-            continue
-
-        reply = brain.think(user_input)
-        print(f"Agent：{reply}")
-        print()
-
-
-if __name__ == "__main__":
-    chat_loop()

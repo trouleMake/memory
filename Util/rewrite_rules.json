@@ -1,0 +1,35 @@
+{
+  "default_limit": 5,
+  "default_sort_hint": "relevance",
+  "default_filters": {
+    "status": "active"
+  },
+  "stopwords": [
+    "帮我",
+    "给我",
+    "找一下",
+    "查一下",
+    "看一下",
+    "我想找",
+    "最好",
+    "关于",
+    "有关",
+    "一下"
+  ],
+  "synonyms": {
+    "python": ["Python", "py"],
+    "mysql": ["MySQL", "mysql数据库"],
+    "连接": ["链接", "接入"],
+    "入门": ["新手", "基础", "初学"],
+    "教程": ["教学", "指南"]
+  },
+  "category_rules": {
+    "tutorial": ["入门", "教程", "新手", "基础", "初学", "教学"],
+    "faq": ["常见问题", "报错", "错误", "异常"],
+    "guide": ["指南", "说明", "文档"]
+  },
+  "sort_rules": {
+    "recent_first": ["最近", "最新", "刚更新", "近期", "最近更新"],
+    "relevance": []
+  }
+}

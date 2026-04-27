@@ -13,13 +13,18 @@ class MemoryService:
         self.repository: MemoryRepository = repository
 
     def extract_and_save(self, user_id: int, message: str) -> List[MemoryItem]:
-        pass
+        memories = self.extractor.extract(user_id, message)
+
+        for memory in memories:
+            self.repository.save_or_update(memory)
+
+        return memories
 
     def get_relevant_memories(self, user_id: int, query: str, limit: int = 5) -> List[MemoryItem]:
-        pass
+        return self.repository.search_relevant(user_id, query, limit)
 
     def get_all_memories(self, user_id: int) -> List[MemoryItem]:
-        pass
+        return self.repository.find_by_user_id(user_id)
 
     def delete_memory(self, user_id: int, key: str) -> None:
-        pass
+        self.repository.delete(user_id, key)
